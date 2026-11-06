@@ -1,65 +1,26 @@
 import { NextResponse } from "next/server"
-import clientPromise from "@/lib/mongodb"
 import { Transaction } from "@/lib/models/Transaction"
-import { verifyToken, getTokenFromRequest } from "@/lib/auth"
-import { ObjectId } from "mongodb"
+import { authenticatedDb, apiError, ApiError } from "@/lib/server-api"
+import { buildTransactions, transactionInput } from "@/lib/transaction-input"
 
+export const dynamic = "force-dynamic"
 export async function GET(request: Request) {
   try {
-    const token = getTokenFromRequest(request)
-    if (!token) {
-      return NextResponse.json({ error: "Token não fornecido" }, { status: 401 })
-    }
-
-    const decoded = verifyToken(token)
-    const client = await clientPromise
-    const db = client.db("family-finance")
-    const transactionModel = new Transaction(db)
-
-    const transactions = await transactionModel.findByUserId(new ObjectId(decoded.userId))
-
-    return NextResponse.json({ transactions })
-  } catch (error: any) {
-    console.error("Get transactions error:", error)
-    return NextResponse.json({ error: "Erro interno do servidor" }, { status: 500 })
-  }
+    const { db, userId } = await authenticatedDb(request)
+    return NextResponse.json({ transactions: await new Transaction(db).findByUserId(userId) })
+  } catch (error) { return apiError(error) }
 }
-
 export async function POST(request: Request) {
   try {
-    const token = getTokenFromRequest(request)
-    if (!token) {
-      return NextResponse.json({ error: "Token não fornecido" }, { status: 401 })
-    }
-
-    const decoded = verifyToken(token)
-    const { description, amount, category, type } = await request.json()
-
-    if (!description || !amount || !category || !type) {
-      return NextResponse.json({ error: "Todos os campos são obrigatórios" }, { status: 400 })
-    }
-
-    const client = await clientPromise
-    const db = client.db("family-finance")
-    const transactionModel = new Transaction(db)
-
-    const transactionData = {
-      userId: new ObjectId(decoded.userId),
-      description,
-      amount: Number.parseFloat(amount),
-      category,
-      type,
-      isPaid: type === "receita" ? true : false, // Receitas são sempre "pagas"
-    }
-
-    const transaction = await transactionModel.create(transactionData)
-
-    return NextResponse.json({
-      message: "Transação criada com sucesso",
-      transaction,
-    })
-  } catch (error: any) {
-    console.error("Create transaction error:", error)
-    return NextResponse.json({ error: "Erro interno do servidor" }, { status: 500 })
+    const { db, userId } = await authenticatedDb(request)
+    const parsed = transactionInput.safeParse(await request.json())
+    if (!parsed.success) throw new ApiError(400, parsed.error.issues[0].message)
+    try { buildTransactions(parsed.data, userId.toHexString()) }
+    catch (error) { throw new ApiError(400, (error as Error).message) }
+    const transactions = await new Transaction(db).create(parsed.data, userId)
+    return NextResponse.json({ transactions }, { status: 201 })
+  } catch (error) {
+    if ((error as { code?: number }).code === 11000) return apiError(new ApiError(409, "Este cadastro já foi recebido com outros valores. Recarregue a página."))
+    return apiError(error)
   }
 }

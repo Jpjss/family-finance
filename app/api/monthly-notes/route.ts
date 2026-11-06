@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server"
-import clientPromise from "@/lib/mongodb"
+import getMongoClient from "@/lib/mongodb"
 import { MonthlyNote } from "@/lib/models/MonthlyNote"
 import { verifyToken, getTokenFromRequest } from "@/lib/auth"
 import { ObjectId } from "mongodb"
@@ -20,7 +20,7 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: "Mês e ano são obrigatórios" }, { status: 400 })
     }
 
-    const client = await clientPromise
+    const client = await getMongoClient()
     const db = client.db("family-finance")
     const monthlyNoteModel = new MonthlyNote(db)
 
@@ -53,7 +53,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Mês e ano são obrigatórios" }, { status: 400 })
     }
 
-    const client = await clientPromise
+    const client = await getMongoClient()
     const db = client.db("family-finance")
     const monthlyNoteModel = new MonthlyNote(db)
 

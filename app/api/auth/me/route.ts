@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server"
-import clientPromise from "@/lib/mongodb"
+import getMongoClient from "@/lib/mongodb"
 import { User } from "@/lib/models/User"
 import { verifyToken, getTokenFromRequest } from "@/lib/auth"
 import { ObjectId } from "mongodb"
@@ -12,7 +12,7 @@ export async function GET(request: Request) {
     }
 
     const decoded = verifyToken(token)
-    const client = await clientPromise
+    const client = await getMongoClient()
     const db = client.db("family-finance")
     const userModel = new User(db)
 

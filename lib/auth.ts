@@ -1,23 +1,31 @@
-// Função simples para verificar token sem dependência externa
-export function verifyToken(token: string) {
-  try {
-    const payload = JSON.parse(Buffer.from(token, 'base64').toString())
-    
-    // Verificar se o token expirou
-    if (payload.exp && payload.exp < Date.now()) {
-      throw new Error("Token expirado")
-    }
-    
-    return payload
-  } catch (error) {
-    throw new Error("Token inválido")
+import { createHmac, timingSafeEqual } from "node:crypto"
+
+function secret() {
+  const value = process.env.AUTH_SECRET
+  if (!value || value.length < 32) throw new Error("Configure AUTH_SECRET com pelo menos 32 caracteres.")
+  return value
+}
+
+export function createToken(userId: string, email: string) {
+  const payload = Buffer.from(JSON.stringify({ userId, email, exp: Date.now() + 7 * 86400000 })).toString("base64url")
+  const signature = createHmac("sha256", secret()).update(payload).digest("base64url")
+  return `${payload}.${signature}`
+}
+
+export function verifyToken(token: string): { userId: string; email: string; exp: number } {
+  const [payload, signature, extra] = token.split(".")
+  if (!payload || !signature || extra) throw new Error("Token inválido")
+  const expected = createHmac("sha256", secret()).update(payload).digest()
+  const actual = Buffer.from(signature, "base64url")
+  if (actual.length !== expected.length || !timingSafeEqual(actual, expected)) throw new Error("Token inválido")
+  const decoded = JSON.parse(Buffer.from(payload, "base64url").toString())
+  if (!/^[a-f0-9]{24}$/i.test(decoded.userId) || !Number.isFinite(decoded.exp) || decoded.exp <= Date.now()) {
+    throw new Error("Token inválido ou expirado")
   }
+  return decoded
 }
 
 export function getTokenFromRequest(req: Request) {
-  const authHeader = req.headers.get("authorization")
-  if (!authHeader || !authHeader.startsWith("Bearer ")) {
-    return null
-  }
-  return authHeader.substring(7)
+  const value = req.headers.get("authorization")
+  return value?.startsWith("Bearer ") ? value.slice(7) : null
 }

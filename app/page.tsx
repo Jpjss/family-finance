@@ -1,7 +1,7 @@
 "use client"
 
 import type React from "react"
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -9,6 +9,14 @@ import { Label } from "@/components/ui/label"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 
 export default function AuthPage() {
+  const [mode, setMode] = useState<"local" | "cloud">("local")
+  const [cloudAvailable, setCloudAvailable] = useState(false)
+  useEffect(() => {
+    fetch("/api/config").then(response => response.json()).then(data => {
+      setCloudAvailable(Boolean(data.cloudEnabled))
+      if (data.cloudEnabled) setMode("cloud")
+    }).catch(() => {})
+  }, [])
   const [isLoading, setIsLoading] = useState(false)
   const [message, setMessage] = useState("")
   const [messageType, setMessageType] = useState<"success" | "error" | "">("")
@@ -28,15 +36,26 @@ export default function AuthPage() {
     setMessage("")
 
     const formData = new FormData(e.currentTarget)
-    const email = formData.get("email") as string
+    const email = String(formData.get("email") || "").trim().toLowerCase()
     const password = formData.get("password") as string
 
     try {
+      if (mode === "cloud") {
+        const response = await fetch("/api/auth/login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email, password }) })
+        const data = await response.json()
+        if (!response.ok) { showMessage(data.error || "Não foi possível entrar.", "error"); return }
+        const localUsers = JSON.parse(localStorage.getItem("users") || "[]")
+        const legacy = localUsers.find((u: any) => u.email.toLowerCase() === email)
+        localStorage.setItem("user", JSON.stringify({ id: data.user._id, name: data.user.name, email: data.user.email, storage: "cloud", legacyLocalId: legacy?.id }))
+        localStorage.setItem("token", data.token)
+        window.location.href = "/dashboard"
+        return
+      }
       // Verificar usuários no localStorage
       const usersData = localStorage.getItem("users")
       const users = JSON.parse(usersData || "[]")
 
-      const user = users.find((u: any) => u.email === email && u.password === password)
+      const user = users.find((u: any) => u.email.toLowerCase() === email && u.password === password)
 
       if (!user) {
         showMessage("Email ou senha incorretos. Verifique suas credenciais.", "error")
@@ -47,7 +66,7 @@ export default function AuthPage() {
       const token = btoa(JSON.stringify({ userId: user.id, email: user.email, timestamp: Date.now() }))
 
       // Armazena os dados do usuário e token
-      localStorage.setItem("user", JSON.stringify(user))
+      localStorage.setItem("user", JSON.stringify({ id: user.id, name: user.name, email: user.email, storage: "local" }))
       localStorage.setItem("token", token)
 
       showMessage("Login realizado com sucesso!", "success")
@@ -70,10 +89,16 @@ export default function AuthPage() {
 
     const formData = new FormData(e.currentTarget)
     const name = formData.get("name") as string
-    const email = formData.get("email") as string
+    const email = String(formData.get("email") || "").trim().toLowerCase()
     const password = formData.get("password") as string
 
     try {
+      if (mode === "cloud") {
+        const response = await fetch("/api/auth/register", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name, email, password }) })
+        const data = await response.json()
+        showMessage(response.ok ? "Conta sincronizada criada. Entre para continuar e importar seus gastos locais." : data.error || "Não foi possível cadastrar.", response.ok ? "success" : "error")
+        return
+      }
       // Verificar usuários existentes
       const usersData = localStorage.getItem("users")
       const users = JSON.parse(usersData || "[]")
@@ -129,6 +154,14 @@ export default function AuthPage() {
           <CardDescription className="text-slate-600">Gerencie suas finanças de forma inteligente</CardDescription>
         </CardHeader>
         <CardContent>
+          <div className="mb-4 space-y-2">
+            <Label htmlFor="storage-mode">Onde salvar os dados</Label>
+            <select id="storage-mode" className="w-full rounded-md border p-2 text-sm" value={mode} disabled={isLoading} onChange={event => setMode(event.target.value as "local" | "cloud")}>
+              <option value="local">Neste navegador</option>
+              <option value="cloud" disabled={!cloudAvailable}>Sincronizado — com lembretes</option>
+            </select>
+            <p className="text-xs text-slate-600">{mode === "cloud" ? "Se sua conta existia apenas neste navegador, cadastre-a no modo sincronizado e importe os gastos no painel." : cloudAvailable ? "Para receber avisos, escolha o modo sincronizado." : "O parcelamento está disponível. Os avisos precisam da configuração do servidor."}</p>
+          </div>
           {message && (
             <div
               className={`mb-4 p-3 rounded-md text-sm ${
@@ -221,6 +254,7 @@ export default function AuthPage() {
                   <Label htmlFor="register-password">Senha</Label>
                   <Input
                     id="register-password"
+                    minLength={mode === "cloud" ? 8 : undefined}
                     name="password"
                     type="password"
                     placeholder="••••••••"

@@ -1,15 +1,7 @@
 import bcrypt from "bcryptjs"
 import type { Db, Collection, ObjectId } from "mongodb"
 
-// Função simples para criar token sem dependência externa
-function createSimpleToken(userId: string, email: string): string {
-  const payload = {
-    userId,
-    email,
-    exp: Date.now() + (7 * 24 * 60 * 60 * 1000) // 7 dias
-  }
-  return Buffer.from(JSON.stringify(payload)).toString('base64')
-}
+import { createToken } from "@/lib/auth"
 
 interface UserData {
   name: string
@@ -33,7 +25,9 @@ export class User {
   }
 
   async create(userData: UserData) {
-    const { name, email, password } = userData
+    const { name, password } = userData
+    const email = userData.email.trim().toLowerCase()
+    await this.collection.createIndex({ email: 1 }, { unique: true })
 
     // Check if user already exists
     const existingUser = await this.collection.findOne({ email })
@@ -56,6 +50,7 @@ export class User {
   }
 
   async authenticate(email: string, password: string) {
+    email = email.trim().toLowerCase()
     const user = await this.collection.findOne({ email })
     if (!user) {
       throw new Error("Credenciais inválidas")
@@ -66,8 +61,8 @@ export class User {
       throw new Error("Credenciais inválidas")
     }
 
-    // Generate simple token
-    const token = createSimpleToken(user._id.toString(), user.email)
+    // Sign the server session
+    const token = createToken(user._id!.toString(), user.email)
 
     return { user: { _id: user._id, name: user.name, email: user.email }, token }
   }

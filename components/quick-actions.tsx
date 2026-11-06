@@ -1,198 +1,39 @@
 "use client"
-
 import { useState } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
-import { Badge } from "@/components/ui/badge"
-import { Checkbox } from "@/components/ui/checkbox"
+import { formatBRL, formatDateOnly, type FinanceTransaction } from "@/lib/finance"
 
-interface Transaction {
-  _id: string
-  type: "receita" | "despesa"
-  amount: number
-  category: string
-  description: string
-  createdAt: string
-  isPaid?: boolean
-  userId: string
-}
-
-interface QuickActionsProps {
-  transactions: Transaction[]
-  onUpdateTransaction: (id: string, updates: Partial<Transaction>) => void
-}
-
-export function QuickActions({ transactions, onUpdateTransaction }: QuickActionsProps) {
-  const [selectedTransactions, setSelectedTransactions] = useState<string[]>([])
-
-  const pendingExpenses = transactions.filter((t) => t.type === "despesa" && !t.isPaid)
-
-  const formatCurrency = (amount: number) => {
-    return new Intl.NumberFormat("pt-BR", {
-      style: "currency",
-      currency: "BRL",
-    }).format(amount)
+export function QuickActions({ transactions, onUpdateTransaction }: {
+  transactions: FinanceTransaction[]
+  onUpdateTransaction: (id: string, updates: Partial<FinanceTransaction>) => Promise<boolean>
+}) {
+  const [busy, setBusy] = useState(false)
+  const [selected, setSelected] = useState<string[]>([])
+  const pending = transactions.filter(row => row.type === "despesa" && !row.isPaid)
+  const selectedRows = pending.filter(row => selected.includes(row._id))
+  async function pay(rows: FinanceTransaction[]) {
+    if (rows.length > 1 && !window.confirm(`Marcar estas ${rows.length} despesas como pagas?`)) return
+    setBusy(true)
+    try {
+      for (const row of rows) {
+        if (!await onUpdateTransaction(row._id, { isPaid: true })) break
+        setSelected(ids => ids.filter(id => id !== row._id))
+      }
+    } finally { setBusy(false) }
   }
-
-  const handleSelectTransaction = (transactionId: string, selected: boolean) => {
-    if (selected) {
-      setSelectedTransactions([...selectedTransactions, transactionId])
-    } else {
-      setSelectedTransactions(selectedTransactions.filter(id => id !== transactionId))
-    }
-  }
-
-  const handleMarkAllAsPaid = () => {
-    selectedTransactions.forEach(id => {
-      onUpdateTransaction(id, { isPaid: true })
-    })
-    setSelectedTransactions([])
-  }
-
-  const handleSelectAll = () => {
-    const allIds = pendingExpenses.map(t => t._id)
-    setSelectedTransactions(selectedTransactions.length === allIds.length ? [] : allIds)
-  }
-
-  const totalSelected = selectedTransactions.reduce((sum, id) => {
-    const transaction = pendingExpenses.find(t => t._id === id)
-    return sum + (transaction?.amount || 0)
-  }, 0)
-
-  if (pendingExpenses.length === 0) {
-    return (
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center space-x-2">
-            <span>⚡</span>
-            <span>Ações Rápidas</span>
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="text-center py-6 text-gray-500">
-            <div className="text-4xl mb-3">🎉</div>
-            <p className="font-medium">Parabéns!</p>
-            <p className="text-sm">Você não tem despesas pendentes</p>
-          </div>
-        </CardContent>
-      </Card>
-    )
-  }
-
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="flex items-center space-x-2">
-          <span>⚡</span>
-          <span>Ações Rápidas</span>
-        </CardTitle>
-        <div className="flex items-center justify-between">
-          <p className="text-sm text-gray-600">
-            {pendingExpenses.length} despesa(s) pendente(s)
-          </p>
-          <Badge variant="outline" className="bg-orange-50 text-orange-700">
-            {formatCurrency(pendingExpenses.reduce((sum, t) => sum + t.amount, 0))}
-          </Badge>
-        </div>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        {/* Controles */}
-        <div className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
-          <div className="flex items-center space-x-3">
-            <Checkbox
-              checked={selectedTransactions.length === pendingExpenses.length && pendingExpenses.length > 0}
-              onCheckedChange={handleSelectAll}
-              className="w-5 h-5"
-            />
-            <span className="text-sm font-medium">
-              Selecionar todas ({selectedTransactions.length}/{pendingExpenses.length})
-            </span>
-          </div>
-          
-          {selectedTransactions.length > 0 && (
-            <div className="flex items-center space-x-2">
-              <Badge className="bg-blue-100 text-blue-700">
-                {formatCurrency(totalSelected)}
-              </Badge>
-              <Button
-                size="sm"
-                onClick={handleMarkAllAsPaid}
-                className="bg-green-600 hover:bg-green-700 text-white"
-              >
-                ✅ Marcar como Pagas
-              </Button>
-            </div>
-          )}
-        </div>
-
-        {/* Lista de despesas pendentes */}
-        <div className="space-y-2 max-h-64 overflow-y-auto">
-          {pendingExpenses.map((transaction) => (
-            <div
-              key={transaction._id}
-              className={`flex items-center justify-between p-3 border rounded-lg transition-all ${
-                selectedTransactions.includes(transaction._id)
-                  ? "border-green-300 bg-green-50"
-                  : "border-gray-200 hover:border-gray-300"
-              }`}
-            >
-              <div className="flex items-center space-x-3">
-                <Checkbox
-                  checked={selectedTransactions.includes(transaction._id)}
-                  onCheckedChange={(checked) => 
-                    handleSelectTransaction(transaction._id, checked as boolean)
-                  }
-                  className="w-4 h-4"
-                />
-                <div>
-                  <p className="font-medium text-sm">
-                    {transaction.description || "Sem descrição"}
-                  </p>
-                  <p className="text-xs text-gray-600 capitalize">
-                    {transaction.category}
-                  </p>
-                </div>
-              </div>
-              
-              <div className="text-right">
-                <p className="font-semibold text-orange-600">
-                  {formatCurrency(transaction.amount)}
-                </p>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => onUpdateTransaction(transaction._id, { isPaid: true })}
-                  className="mt-1 text-xs border-green-300 text-green-600 hover:bg-green-50"
-                >
-                  ✅ Pagar
-                </Button>
-              </div>
-            </div>
-          ))}
-        </div>
-
-        {/* Botões de ação rápida */}
-        <div className="grid grid-cols-2 gap-2 pt-2">
-          <Button
-            variant="outline"
-            onClick={() => {
-              pendingExpenses.forEach(t => {
-                onUpdateTransaction(t._id, { isPaid: true })
-              })
-            }}
-            className="text-sm border-green-300 text-green-600 hover:bg-green-50"
-          >
-            ✅ Pagar Todas
-          </Button>
-          <Button
-            variant="outline"
-            onClick={() => setSelectedTransactions([])}
-            className="text-sm"
-          >
-            🔄 Limpar Seleção
-          </Button>
-        </div>
-      </CardContent>
-    </Card>
-  )
+  return <Card><CardHeader><CardTitle>Ações rápidas</CardTitle></CardHeader><CardContent className="space-y-3">
+    <p className="text-sm text-slate-600">{pending.length} despesa(s) pendente(s) no período selecionado.</p>
+    <p className="font-semibold text-orange-700">{formatBRL(pending.reduce((sum, row) => sum + row.amount, 0))}</p>
+    {pending.length > 0 && <fieldset disabled={busy} className="space-y-3">
+      <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={selectedRows.length === pending.length} onChange={event => setSelected(event.target.checked ? pending.map(row => row._id) : [])} />Selecionar todas</label>
+      <div className="max-h-64 overflow-y-auto space-y-2">{pending.map(row => <label key={row._id} className="flex items-start gap-2 rounded-md border p-2 text-sm">
+        <input className="mt-1" type="checkbox" checked={selected.includes(row._id)} onChange={event => setSelected(ids => event.target.checked ? [...ids, row._id] : ids.filter(id => id !== row._id))} />
+        <span className="min-w-0 break-words">{row.description || "Sem descrição"}{(row.installmentCount || 1) > 1 ? ` · ${row.installmentNumber}/${row.installmentCount}` : ""}<span className="block text-xs text-slate-600">{formatBRL(row.amount)}{row.dueDate ? ` · ${formatDateOnly(row.dueDate)}` : ""}</span></span>
+      </label>)}</div>
+      {selectedRows.length > 0 && <Button className="w-full" onClick={() => pay(selectedRows)}>Pagar selecionadas ({formatBRL(selectedRows.reduce((sum, row) => sum + row.amount, 0))})</Button>}
+      <Button variant="outline" className="w-full" onClick={() => pay(pending)}>{busy ? "Salvando..." : "Marcar todas como pagas"}</Button>
+      <Button variant="ghost" className="w-full" onClick={() => setSelected([])}>Limpar seleção</Button>
+    </fieldset>}
+  </CardContent></Card>
 }

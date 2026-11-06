@@ -8,7 +8,9 @@
     "dev-external": "next dev -H 0.0.0.0",
     "lint": "next lint",
     "start": "next start",
-    "init-db": "node scripts/init-db.js"
+    "init-db": "node scripts/init-db.js",
+    "test": "node --require ./tests/register.cjs --test tests/*.test.cjs",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@aws-sdk/credential-providers": "latest",

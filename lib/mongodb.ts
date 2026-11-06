@@ -1,30 +1,16 @@
 import { MongoClient } from "mongodb"
 
-if (!process.env.MONGODB_URI) {
-  throw new Error('Please define the MONGODB_URI environment variable inside .env')
-}
+const cache = globalThis as typeof globalThis & { financeMongo?: Promise<MongoClient> }
 
-const uri = process.env.MONGODB_URI
-const options = {
-  connectTimeoutMS: 10000,
-  retryWrites: true,
-}
-
-let client: MongoClient
-let clientPromise: Promise<MongoClient>
-
-if (process.env.NODE_ENV === "development") {
-  // In development mode, use a global variable so that the value
-  // is preserved across module reloads caused by HMR (Hot Module Replacement).
-  if (!(global as any)._mongoClientPromise) {
-    client = new MongoClient(uri, options)
-    ;(global as any)._mongoClientPromise = client.connect()
+// Lazy connection keeps local mode and builds independent of database credentials.
+export default async function getMongoClient() {
+  const uri = process.env.MONGODB_URI
+  if (!uri) throw new Error("Configure MONGODB_URI para usar a sincronização e os avisos.")
+  if (!cache.financeMongo) {
+    cache.financeMongo = new MongoClient(uri, { serverSelectionTimeoutMS: 10000 }).connect().catch(error => {
+      cache.financeMongo = undefined
+      throw error
+    })
   }
-  clientPromise = (global as any)._mongoClientPromise
-} else {
-  // In production mode, it's best to not use a global variable.
-  client = new MongoClient(uri, options)
-  clientPromise = client.connect()
+  return cache.financeMongo
 }
-
-export default clientPromise

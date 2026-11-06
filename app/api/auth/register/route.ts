@@ -1,27 +1,19 @@
 import { NextResponse } from "next/server"
-import clientPromise from "@/lib/mongodb"
+import { z } from "zod"
+import getMongoClient from "@/lib/mongodb"
 import { User } from "@/lib/models/User"
+import { apiError, ApiError } from "@/lib/server-api"
 
 export async function POST(request: Request) {
   try {
-    const { name, email, password } = await request.json()
-
-    if (!name || !email || !password) {
-      return NextResponse.json({ error: "Todos os campos são obrigatórios" }, { status: 400 })
-    }
-
-    const client = await clientPromise
-    const db = client.db("family-finance")
-    const userModel = new User(db)
-
-    const user = await userModel.create({ name, email, password })
-
-    return NextResponse.json({
-      message: "Usuário criado com sucesso",
-      user: { _id: user._id, name: user.name, email: user.email },
-    })
-  } catch (error: any) {
-    console.error("Register error:", error)
-    return NextResponse.json({ error: error.message || "Erro interno do servidor" }, { status: 500 })
+    const input = z.object({ name: z.string().trim().min(1).max(100), email: z.string().trim().email().max(254), password: z.string().min(8).max(72) }).safeParse(await request.json())
+    if (!input.success) throw new ApiError(400, "Informe nome, e-mail válido e senha entre 8 e 72 caracteres.")
+    if ((process.env.AUTH_SECRET?.length || 0) < 32) throw new ApiError(503, "O modo sincronizado ainda precisa ser configurado.")
+    const db = (await getMongoClient()).db("family-finance")
+    const user = await new User(db).create(input.data)
+    return NextResponse.json({ user: { _id: user._id, name: user.name, email: user.email } }, { status: 201 })
+  } catch (error) {
+    if ((error as { code?: number }).code === 11000 || (error as Error).message === "Essa conta já existe") return apiError(new ApiError(409, "Essa conta já existe. Entre no modo sincronizado."))
+    return apiError(error)
   }
 }

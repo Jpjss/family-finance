@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Textarea } from "@/components/ui/textarea"
@@ -10,22 +10,9 @@ import { TransactionList } from "@/components/transaction-list"
 import { FinancialAnalytics } from "@/components/financial-analytics"
 import { QuickActions } from "@/components/quick-actions"
 
-interface User {
-  id: string
-  email: string
-  name: string
-}
-
-interface Transaction {
-  _id: string
-  type: "receita" | "despesa"
-  amount: number
-  category: string
-  description: string
-  createdAt: string
-  isPaid?: boolean
-  userId: string
-}
+import { NotificationSettings } from "@/components/notification-settings"
+import { loadTransactions, updatePayment, type FinanceUser as User } from "@/lib/finance-client"
+import { todayInSaoPaulo, transactionMonth, type FinanceTransaction as Transaction } from "@/lib/finance"
 
 interface MonthlyNotes {
   month: string
@@ -41,6 +28,12 @@ interface MonthOption {
 export default function Dashboard() {
   const [user, setUser] = useState<User | null>(null)
   const [transactions, setTransactions] = useState<Transaction[]>([])
+  const [selectedMonth, setSelectedMonth] = useState(() => todayInSaoPaulo().slice(0, 7))
+  const [transactionError, setTransactionError] = useState("")
+  const [transactionsLoading, setTransactionsLoading] = useState(false)
+  const activePayments = useRef(new Set<string>())
+  const visibleTransactions = transactions.filter(row => selectedMonth === "all" || transactionMonth(row) === selectedMonth)
+  const transactionMonths = Array.from(new Set([todayInSaoPaulo().slice(0, 7), ...transactions.map(transactionMonth)])).sort().reverse()
   const [showForm, setShowForm] = useState(false)
   const [loading, setLoading] = useState(true)
   const [activeTab, setActiveTab] = useState<"overview" | "analytics">("overview")
@@ -75,7 +68,7 @@ export default function Dashboard() {
   const hasMonthlyNotes = (month: string): boolean => {
     if (!user) return false;
     
-    const storageKey = `monthly_notes_${user.id}_${month}`;
+    const storageKey = `monthly_notes_${user.legacyLocalId || user.id}_${month}`;
     const savedNotes = localStorage.getItem(storageKey);
     
     if (!savedNotes) return false;
@@ -96,29 +89,11 @@ export default function Dashboard() {
   const [monthOptionsKey, setMonthOptionsKey] = useState(0); // Para forçar re-render do select
 
   const fetchTransactions = async () => {
-    try {
-      const user = JSON.parse(localStorage.getItem("user") || "{}")
-      console.log("Carregando transações para usuário:", user)
-      
-      if (!user.id) {
-        console.log("Usuário não encontrado")
-        return
-      }
-
-      const savedTransactions = localStorage.getItem(`transactions_${user.id}`)
-      console.log("Transações encontradas no localStorage:", savedTransactions)
-      
-      if (savedTransactions) {
-        const parsedTransactions = JSON.parse(savedTransactions)
-        console.log("Transações parseadas:", parsedTransactions)
-        setTransactions(parsedTransactions)
-      } else {
-        console.log("Nenhuma transação encontrada")
-        setTransactions([])
-      }
-    } catch (error) {
-      console.error('Erro ao carregar transações:', error)
-    }
+    setTransactionsLoading(true)
+    setTransactionError("")
+    try { setTransactions(await loadTransactions()) }
+    catch (error) { setTransactionError((error as Error).message) }
+    finally { setTransactionsLoading(false) }
   }
 
   useEffect(() => {
@@ -141,7 +116,7 @@ export default function Dashboard() {
     const currentMonth = getCurrentMonth();
     console.log("Mês atual:", currentMonth)
     
-    const storageKey = `monthly_notes_${parsedUser.id}_${currentMonth}`
+    const storageKey = `monthly_notes_${parsedUser.legacyLocalId || parsedUser.id}_${currentMonth}`
     const savedNotes = localStorage.getItem(storageKey)
     console.log(`Procurando anotações na chave: ${storageKey}`)
     console.log("Anotações encontradas:", savedNotes)
@@ -171,7 +146,7 @@ export default function Dashboard() {
     setMonthlyNotes(updatedNotes)
 
     if (user) {
-      const storageKey = `monthly_notes_${user.id}_${monthlyNotes.month}`
+      const storageKey = `monthly_notes_${user.legacyLocalId || user.id}_${monthlyNotes.month}`
       localStorage.setItem(storageKey, JSON.stringify(updatedNotes))
       console.log(`Anotação salva para ${field}:`, value)
       console.log(`Chave do localStorage: ${storageKey}`)
@@ -184,7 +159,7 @@ export default function Dashboard() {
 
   const loadMonthlyNotes = (selectedMonth: string) => {
     if (user) {
-      const storageKey = `monthly_notes_${user.id}_${selectedMonth}`
+      const storageKey = `monthly_notes_${user.legacyLocalId || user.id}_${selectedMonth}`
       const savedNotes = localStorage.getItem(storageKey)
       console.log(`Carregando anotações para ${selectedMonth}:`, savedNotes)
       
@@ -207,7 +182,7 @@ export default function Dashboard() {
 
   const clearMonthlyNotes = () => {
     if (user && window.confirm(`Deseja limpar todas as anotações de ${formatMonth(monthlyNotes.month)}?`)) {
-      const storageKey = `monthly_notes_${user.id}_${monthlyNotes.month}`
+      const storageKey = `monthly_notes_${user.legacyLocalId || user.id}_${monthlyNotes.month}`
       localStorage.removeItem(storageKey)
       setMonthlyNotes({
         month: monthlyNotes.month,
@@ -229,8 +204,8 @@ export default function Dashboard() {
     // Buscar todas as anotações do usuário no localStorage
     for (let i = 0; i < localStorage.length; i++) {
       const key = localStorage.key(i);
-      if (key && key.startsWith(`monthly_notes_${user.id}_`)) {
-        const month = key.replace(`monthly_notes_${user.id}_`, '');
+      if (key && key.startsWith(`monthly_notes_${user.legacyLocalId || user.id}_`)) {
+        const month = key.replace(`monthly_notes_${user.legacyLocalId || user.id}_`, '');
         const notes = JSON.parse(localStorage.getItem(key) || '{}');
         if (notes.expenses || notes.income) {
           allNotes[month] = notes;
@@ -255,35 +230,38 @@ export default function Dashboard() {
 
   const handleLogout = () => {
     localStorage.removeItem("user")
+    localStorage.removeItem("token")
     window.location.href = "/"
   }
 
-  const handleTransactionAdded = () => {
+  const handleTransactionAdded = (month?: string) => {
+    if (month) setSelectedMonth(month)
     console.log("handleTransactionAdded chamado")
     fetchTransactions() // Recarrega as transações
     setShowForm(false)
   }
 
-  const handleUpdateTransaction = async (id: string, updates: Partial<Transaction>) => {
-    if (!user) return
-
+  const handleUpdateTransaction = async (id: string, updates: Partial<Transaction>): Promise<boolean> => {
+    if (!user || typeof updates.isPaid !== "boolean" || activePayments.current.has(id)) return false
+    activePayments.current.add(id)
+    setTransactionError("")
     try {
-      const updatedTransactions = transactions.map((t) => (t._id === id ? { ...t, ...updates } : t))
-      
-      setTransactions(updatedTransactions)
-      localStorage.setItem(`transactions_${user.id}`, JSON.stringify(updatedTransactions))
+      await updatePayment(id, updates.isPaid)
+      setTransactions(rows => rows.map(row => row._id === id ? { ...row, isPaid: updates.isPaid } : row))
+      return true
     } catch (error) {
-      console.error('Erro ao atualizar transação:', error)
-    }
+      setTransactionError((error as Error).message)
+      return false
+    } finally { activePayments.current.delete(id) }
   }
 
   const calculateMetrics = () => {
-    console.log("Calculando métricas para transações:", transactions)
+    console.log("Calculando métricas para transações:", visibleTransactions)
     
-    const receitas = transactions.filter((t) => t.type === "receita").reduce((sum, t) => sum + t.amount, 0)
-    const despesas = transactions.filter((t) => t.type === "despesa" && !t.isPaid).reduce((sum, t) => sum + t.amount, 0)
+    const receitas = visibleTransactions.filter((t) => t.type === "receita").reduce((sum, t) => sum + t.amount, 0)
+    const despesas = visibleTransactions.filter((t) => t.type === "despesa" && !t.isPaid).reduce((sum, t) => sum + t.amount, 0)
 
-    const despesasPagas = transactions
+    const despesasPagas = visibleTransactions
       .filter((t) => t.type === "despesa" && t.isPaid)
       .reduce((sum, t) => sum + t.amount, 0)
 
@@ -397,6 +375,17 @@ export default function Dashboard() {
       </div>
 
       <main className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 py-4 sm:py-8">
+        <div className="mb-6 flex flex-wrap items-center gap-3">
+          <label htmlFor="transaction-month" className="text-sm font-medium">Período dos gastos</label>
+          <select id="transaction-month" className="rounded-md border bg-white p-2 text-sm" value={selectedMonth} onChange={event => setSelectedMonth(event.target.value)}>
+            <option value="all">Todos os meses</option>
+            {transactionMonths.map(month => <option value={month} key={month}>{formatMonth(month)}</option>)}
+          </select>
+          <span className="text-xs text-slate-600">{user.storage === "cloud" ? "Sincronizado com o servidor" : "Salvo neste navegador"}</span>
+        </div>
+        {transactionsLoading && <p role="status" className="mb-4 text-sm">Carregando transações...</p>}
+        {transactionError && <div role="alert" className="mb-4 rounded-md bg-red-50 p-3 text-red-700 text-sm">{transactionError} <Button variant="outline" size="sm" onClick={fetchTransactions}>Tentar novamente</Button></div>}
+        <NotificationSettings cloud={user.storage === "cloud"} onImported={fetchTransactions} />
         {activeTab === "overview" && (
           <>
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-6 mb-6 sm:mb-8">
@@ -536,11 +525,11 @@ export default function Dashboard() {
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6">
           <div className="lg:col-span-2">
-            <TransactionList transactions={transactions} onUpdateTransaction={handleUpdateTransaction} />
+            <TransactionList transactions={visibleTransactions} onUpdateTransaction={handleUpdateTransaction} />
           </div>
           
           <div className="space-y-4 sm:space-y-6">
-            <QuickActions transactions={transactions} onUpdateTransaction={handleUpdateTransaction} />
+            <QuickActions transactions={visibleTransactions} onUpdateTransaction={handleUpdateTransaction} />
             
             <Card>
               <CardHeader className="px-4 sm:px-6">
@@ -548,7 +537,7 @@ export default function Dashboard() {
                 <CardDescription className="text-sm">Gastos por categoria</CardDescription>
               </CardHeader>
               <CardContent className="px-4 sm:px-6">
-              {transactions.length === 0 ? (
+              {visibleTransactions.length === 0 ? (
                 <div className="text-center py-6 sm:py-8 text-slate-500">
                   <svg
                     className="w-10 h-10 sm:w-12 sm:h-12 mx-auto mb-3 sm:mb-4 text-slate-300"
@@ -569,7 +558,7 @@ export default function Dashboard() {
               ) : (
                 <div className="space-y-3 sm:space-y-4">
                   {Object.entries(
-                    transactions
+                    visibleTransactions
                       .filter((t) => t.type === "despesa")
                       .reduce(
                         (acc, t) => {
@@ -599,7 +588,7 @@ export default function Dashboard() {
         )}
 
         {activeTab === "analytics" && (
-          <FinancialAnalytics transactions={transactions} />
+          <FinancialAnalytics transactions={visibleTransactions} />
         )}
       </main>
     </div>
